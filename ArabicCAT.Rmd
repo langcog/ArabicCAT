@@ -16,12 +16,30 @@ require(readxl)
 ## Load JISH Data
 
 ```{r load-data, echo=F}
+# from Haifa Alroqi May 13, 2022 - JISH CDI (JACDI) norms 
+# The data file has WG and WS. Column BXW (total.produce) represents the total number of words produced by the whole sample. 
+# Column BXV (total.understand) represents the total number of words comprehended by, I think, the whole sample. 
+# I assume JISH initially used the vocabulary list of WS (which has the 550 words from WG and additional 348 words that are specific to WS) to collect data on both expressive and receptive vocabulary size of the whole sample. 
+# Columns BYG (age.months) and BYH (age.group) can help us distinguish between WG and WS. WG is for children aged 8-16 months; WS is for children aged 17-36 months. 
 sheets <- readxl::excel_sheets(path="data/JISH - CDI Data.xlsx")
 
 raw <- read_xlsx(path="data/JISH - CDI Data.xlsx", sheet="JACDI Data")
 
 notes <- read_xlsx(path="data/JISH - CDI Data.xlsx", sheet="Notes")
+# note there are red highlighted columns that were not included in the paper form (so maybe discard?)
+# also: "yellow highlight cells means we don't know what the word is in Arabic or we don't know what the column represents"
 codebook <- read_xlsx(path="data/JISH - CDI Data.xlsx", sheet="Codebook")
+
+## new data from Haifa Alroqi June 7, 2022
+sheets_wg <- readxl::excel_sheets(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx")
+raw_wg <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx", sheet="Saudi CDI - WG")
+notes_wg <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx", sheet="Notes")
+
+sheets_ws <- readxl::excel_sheets(path="data/Alroqi et al. 2020 - Saudi CDI - WS.xlsx")
+raw_ws <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WS.xlsx", sheet="Saudi CDI - WS")
+notes_ws <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WS.xlsx", sheet="Notes")
+
+intersect(raw_wg[1,], raw_ws[1,])
 ```
 
 Are 'ant.1.u' and 'ant.1.p' understanding and production (on WG form)? 
