@@ -11,6 +11,8 @@ require(tidyverse)
 require(mirt)
 require(mirtCAT)
 require(readxl)
+require(kableExtra)
+source("IRT_helpers.R")
 ```
 
 ## Load JISH Data
@@ -174,7 +176,181 @@ coefs_2pl <- as_tibble(coef(mod_2pl, simplify = TRUE)$items) %>%
 fscores_2pl <- tibble(data_id = rownames(d_mat), 
                              ability = fscores(mod_2pl, method = "MAP")[,1])
 
-save(file = "data/fr_ws_wg_mod_2pl.Rds", "mod_2pl","fscores_2pl", "coefs_2pl")
+save(file = "data/arabic_mod_2pl.Rds", "mod_2pl","fscores_2pl", "coefs_2pl")
 ```
 
 
+```{r psycho-fit_irt_3pl, echo=F, eval = RUN_MODELS}
+mod_3pl <- mirt::mirt(d_mat, 1, itemtype='3PL', verbose=TRUE, 
+                      technical=list(NCYCLES=4000))
+
+coefs_3pl <- as_tibble(coef(mod_3pl, simplify = TRUE)$items) %>%
+  mutate(definition = rownames(coef(mod_3pl, simplify = TRUE)$items))
+fscores_3pl <- tibble(data_id = rownames(d_mat), 
+                             ability = fscores(mod_3pl, method = "MAP")[,1])
+
+save(file = "data/arabic_mod_3pl.Rds", "mod_3pl","fscores_3pl", "coefs_3pl")
+```
+
+
+
+```{r psycho-models_load, echo=F}
+load("data/arabic_mod_1pl.Rds")
+load("data/arabic_mod_2pl.Rds")
+load("data/arabic_mod_3pl.Rds")
+```
+
+
+## Model comparison.
+
+Compared to the Rasch model, the 2PL model fits better and is preferred by both AIC and BIC.
+
+```{r, anovas, include=F}
+
+mc1 <- get_anova_table(mod_1pl, mod_2pl, c("Rasch", "2PL"))
+mc2 <- get_anova_table(mod_2pl, mod_3pl, c("2PL", "3PL"))
+```
+
+
+```{r, echo=F}
+kable(mc1, digits=2, 
+      caption="Comparison of Rasch and 2PL models.") %>%
+      html_table_width(c(60, 80, 80, 80, 50))
+```
+
+The 2PL is favored over the 3PL model by BIC, although AIC prefers the 3PL.
+
+
+```{r, echo=F}
+kable(mc2, digits=2, 
+      caption="Comparison of 2PL and 3PL models.") %>%
+      html_table_width(c(60, 80, 80, 80, 50))
+```
+
+
+The 2PL is preferred over both the Rasch (1PL) model and the 3PL model by BIC, so we do the rest of our analyses using the 2PL model as the basis.
+Next we look for linear dependencies (LD) among the items, and also check for ill-fitting items. We will remove any items that show both strong LD and poor fit.
+
+
+# Item bank
+
+## Examine Linear Dependencies
+
+```{r, linear-ind, echo=F, eval=RUN_MODELS}
+#res = residuals(mod_2pl, type = 'JSI') # finished (slowly) for 166 items, but error on 167th:
+# Could not invert information matrix; model likely is not empirically identified.Error in x[1L:2L, "a1"] : subscript out of bounds
+# Error in x[1L:2L, "a1"] : subscript out of bounds
+
+res = residuals(mod_2pl, type = 'LD') # upper diag are standardized residuals in the form of signed Cramers V coefficients
+save(file=here("data/Arabic_LD.Rds"), "res")
+# most values near 0, but some +/-300...but Cramer's V is supposed to be 0-1 ???
+```
+
+```{r, linear-dep-tab, echo=F, caption="Items showing moderate LD with 9 or more other items."}
+load(here("data/Arabic_LD.Rds"))
+
+# no association = abs(V) < .1 no association, .3 is moderate, and .5+ is strong
+
+hiLDvio = get_LD_violations(res, assoc_str=.5)
+hiLDvio_words = coefs_2pl[which(hiLDvio>10),]$definition # 682 !
+
+modLDvio = get_LD_violations(res)
+modLDvio_words = coefs_2pl[which(modLDvio>10),]$definition # 692 words have moderate LD ... 
+
+
+# ToDo: try just removing the few items with many violations (e.g., 1 item has 33..),
+# and then re-fit the model
+
+#kable(matrix(coefs_2pl[which(modLDvio>10),]$definition, ncol=2)) %>% 
+#  html_table_width(rep(150, 2))
+```
+
+We examined each item for pairwise linear dependencies (LD) with other items using $\chi^{2}$ (Chen & Thissen, 1997), and found that `r length(hiLDvio_words)` items show strong LD (Cramer's $V \geq 0.5$), and `r length(modLDvio_words)` items show moderate LD ($V \geq 0.3$) with at least 10 other items. 
+This suggests multidimensionality, and we may want to look into exploratory factor analysis.
+
+
+## Ill-fitting items
+
+Our next goal is to determine if all items should be included in the item bank. Items that have very bad properties should probably be dropped. We will prune any ill-fitting items ($\chi^{2}*_{df}$ $p<.001$) from the full 2PL model that *also* showed strong LD.
+
+```{r, item-fit-2pl, echo=F, eval=RUN_MODELS}
+# use the 2PL fitted to all items
+itfit2pl <- itemfit(mod_2pl, fit_stats = "X2") # need to use MAP estimates?
+# had to switch from S_X2 because it can't handle missing data (all WG subjects)
+
+itfit2pl_x2 <- itemfit(mod_2pl, fit_stats = 'X2*_df', Theta=fscores_2pl) # [-c(713,5132),]
+# 'X2*_df' : Stone's (2000) fit statistics that require parametric bootstrapping to obtain scaled versions of the X2* and degrees of freedom
+# 'PV_Q1*' : Chalmers and Ng's (2017) plausible-value variant of the Q1 statistic that uses parametric bootstrapping to obtain a suitable empirical distribution
+save(file=here("data/fr_ws_wg_2pl_itemfits.Rds"), "itfit2pl") #  "itfit2pl_x2"
+```
+
+```{r, echo=F}
+load(here("data/fr_ws_wg_2pl_itemfits.Rds"))
+#bad_items2pl = which(itfit2pl$p.S_X2 < .05) # 0!
+#bad_items2pl = which(itfit2pl$p.S_X2 < .01) # 0 with p<.01 
+bad_items2pl = which(itfit2pl$p.X2 < .001) # 48
+#bad_items2pl_x2 = which(itfit2pl_x2$p.X2_star_scaled < .001) # 223 with p<.01, 142 with p<.001
+#print(itfit1)
+#med_rmsea = median(itfit2pl_x2$RMSEA.X2_star_scaled, na.rm=T) # .01
+#length(which(itfit2pl$RMSEA.X2_star_scaled > .02))
+
+# items showing strong LD and poor fit
+bad_ld_fit = intersect(which(hiLDvio > 0), bad_items2pl)
+```
+
+`r length(bad_items2pl)` items did not fit well in the full 2PL model, and these items are shown below. 
+
+```{r, include=F, echo=F}
+kable(matrix(itfit2pl$item[bad_items2pl][1:48], ncol=4)) %>% 
+  html_table_width(rep(150, 4))
+```
+
+### Plot 2PL Coefficients
+
+Next, we examine the coefficients of the 2PL model. 
+Items that are estimated to be very easy (e.g., mommy, daddy, ball) or very difficult (would, were, country) are highlighted, as well as those at the extremes of discrimination (a1).
+
+```{r, fig.width=8, fig.height=6, echo=F}
+ggplot(coefs_2pl, 
+       aes(x = a1, y = d)) + 
+  geom_point(alpha=.7) + 
+  ggrepel::geom_label_repel(data = filter(coefs_2pl, 
+                                          a1 < 1.5   | d > 2.5 | 
+                                          a1 > 4.5 | d < -5.5), 
+                            aes(label = definition)) + theme_bw()
+```
+
+
+
+Next, we will run simulated CATs on the data from the `r nrow(d_mat)` 12-36 month-olds. 
+However, since many of these participants' data are from the CDI:WG form, there are many missing responses (compared to the CDI:WS). 
+In order to run the simulated CATs, we impute the missing data using the participants' estimated ability and the 2PL model.
+Overall, `r round(100*sum(is.na(d_mat))/length(d_mat),1)`% of the data was missing, and will be imputed.
+
+```{r, impute-missing-data, echo=F, warning=F}
+# To run the CAT simulations, we need to impute the missing responses
+set.seed(123)
+fs <- fscores(mod_2pl)
+d_mat_imp = imputeMissing(mod_2pl, Theta=fs) # fscores_2pl has just ability, not discrim
+# Imputing too much data can lead to very conservative results. Use with caution.
+```
+
+## Fixed-length CATs
+
+```{r, fixed-length-CAT, echo=F, eval = RUN_MODELS}
+cores = detectCores()
+cl = makeCluster(cores[1]-1) # don't overload computer
+registerDoParallel(cl)
+
+f25 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=25)
+f50 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=50)
+f75 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=75)
+f100 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=100)
+f200 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=200)
+f300 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=300)
+f400 = doCAT_fixed_length(d_mat_imp, mod_2pl, min_items=400)
+save("f25", "f50", "f75", "f100", 
+     "f200", "f300", "f400", 
+     file=here("data/fr_ws_wg_CAT_fixed_length.Rds"))
+
+```
