@@ -1,0 +1,32 @@
+{
+    "id": "B3E00334",
+    "path": null,
+    "project_path": null,
+    "type": "r_dataframe",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1654522297342.0,
+    "source_on_save": false,
+    "relative_order": 3,
+    "properties": {
+        "expression": "codebook",
+        "caption": "codebook",
+        "totalObservations": 96,
+        "displayedObservations": 96,
+        "variables": 5,
+        "cacheKey": "BA885104",
+        "object": "codebook",
+        "environment": "",
+        "contentUrl": "grid_resource/gridviewer.html?env=&obj=codebook&cache_key=BA885104&max_cols=50",
+        "preview": 0
+    },
+    "folds": "",
+    "lastKnownWriteTime": 140227453441240,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1654522297342,
+    "read_only": false,
+    "read_only_alternatives": []
+}

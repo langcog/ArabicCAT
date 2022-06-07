@@ -1,0 +1,4 @@
+"0","save(file = here(""data/arabic_mod_1pl.Rds""), ""mod_1pl"", ""fscores_1pl"", ""coefs_1pl"")
+"
+"2","Error in here(""data/arabic_mod_1pl.Rds"") : could not find function ""here""
+"

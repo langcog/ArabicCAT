@@ -1,0 +1,1 @@
+{"frames":[{"func":"save(file = here(\"data/arabic_mod_1pl.Rds\"), \"mod_1pl\", \"fscores_1pl\", \n    \"coefs_1pl\")","file":"","line_number":0,"end_line_number":0,"character_number":0,"end_character_number":0}],"message":"Error in here(\"data/arabic_mod_1pl.Rds\") : could not find function \"here\"\n"}
