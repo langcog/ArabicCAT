@@ -1,16 +1,7 @@
-# from Haifa Alroqi May 13, 2022 - JISH CDI (JACDI) norms 
-# The data file has WG and WS. Column BXW (total.produce) represents the total number of words produced by the whole sample. 
-# Column BXV (total.understand) represents the total number of words comprehended by, I think, the whole sample. 
-# I assume JISH initially used the vocabulary list of WS (which has the 550 words from WG and additional 348 words that are specific to WS) to collect data on both expressive and receptive vocabulary size of the whole sample. 
-# Columns BYG (age.months) and BYH (age.group) can help us distinguish between WG and WS. WG is for children aged 8-16 months; WS is for children aged 17-36 months. 
-sheets <- readxl::excel_sheets(path="data/JISH - CDI Data.xlsx")
 
-raw <- read_xlsx(path="data/JISH - CDI Data.xlsx", sheet="JACDI Data")
 
-notes <- read_xlsx(path="data/JISH - CDI Data.xlsx", sheet="Notes")
-# note there are red highlighted columns that were not included in the paper form (so maybe discard?)
-# also: "yellow highlight cells means we don't know what the word is in Arabic or we don't know what the column represents"
-codebook <- read_xlsx(path="data/JISH - CDI Data.xlsx", sheet="Codebook")
+
+
 
 ## new data from Haifa Alroqi June 7, 2022 - 82 WG subjects
 sheets_wg <- readxl::excel_sheets(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx")
@@ -24,9 +15,10 @@ wg_dem <- raw_wg[,c(1:23,574:576)] %>% # ToDo: calculate age from Timestamp - DO
   rename(child_id = )
 wg_voc <- raw_wg[,24:573]
 
-intersect(names(wg_voc), names(raw2))
+# intersect(names(wg_voc), names(raw2))
 
 new_wg_names = paste0(names(wg_voc), ".p")
+
 intersect(new_wg_names, names(raw2)) # 511
 setdiff(new_wg_names, names(raw2)) # 
 # "puppy.p"              "ant.p"                "fly.insect.p"         "whistle.p"           
