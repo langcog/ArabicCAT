@@ -177,50 +177,165 @@ ggplot(admins,
   ylab("Age (months)")
   
 ```
-
+Our tentative conclusion is that production up to 30 months should be useable but we are worried about both comprehension data and 31-36 month production data. 
 
 ## Alroqi data
+
+### WG data
 
 A new dataset received from Haifa Alroqi June 7, 2022 - 82 WG subjects
 
 ```{r eval=FALSE}
-sheets_wg <- readxl::excel_sheets(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx")
-raw_wg <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx", sheet="Saudi CDI - WG")
-notes_wg <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx", sheet="Notes")
-
-wg_cols <- names(raw_wg)
-colnames(raw_wg) = raw_wg[1,]
-raw_wg <- raw_wg[3:nrow(raw_wg),]
-wg_dem <- raw_wg[,c(1:23,574:576)] %>% # ToDo: calculate age from Timestamp - DOB ?
-  rename(child_id = )
-wg_voc <- raw_wg[,24:573]
-
-intersect(names(wg_voc), names(raw2))
-
-new_wg_names = paste0(names(wg_voc), ".p")
-intersect(new_wg_names, names(raw2)) # 511
-setdiff(new_wg_names, names(raw2)) # 
-# "puppy.p"              "ant.p"                "fly.insect.p"         "whistle.p"           
-# "iPad.p"               "Nutella.p"            "coat.p"               "hair.clip.p"         
-# "candle.p"             "knife.p"              "mat.p"                "mountain.p"          
-# "swing.noun.p"         "dada.child.nanny.p"   "finger.game.p"        "sneeze.noun.1.p"     
-# "say.u.p"              "fall.down.p"          "blow.nose.p"          "crash.p"             
-# "get.sth.out.p"        "throw.p"              "go.down.p"            "black.p"             
-# "old.in.age.p"         "cough.noun.p"         "thirsty.p"            "that.masculine.p"    
-# "finished.no.more.1.p" "i.dont.want.p"        "finished.p"           "finished.no.more.2.p"
-# "another.p"            "some.p"               "if.p"   
-
-# ToDo: fix difficult format -- looks like each row (child) lists the items they know in each category, but 
-# NOT in the same columns...need to either iterate over each row and try to match the columns, or reformat by hand..
-sheets_ws <- readxl::excel_sheets(path="data/Alroqi et al. 2020 - Saudi CDI - WS.xlsx")
-raw_ws <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WS.xlsx", sheet="Saudi CDI - WS") # 243 subjects
-notes_ws <- read_xlsx(path="data/Alroqi et al. 2020 - Saudi CDI - WS.xlsx", sheet="Notes")
-
-intersect(raw_wg[1,], raw_ws[1,])
+raw_wg <- read_xlsx(path="raw_data/Alroqi et al. 2020 - Saudi CDI - WG - updated.xlsx", sheet="Saudi CDI - WG")
+notes_wg <- read_xlsx(path="raw_data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx", sheet="Notes")
 ```
 
-Are 'ant.1.u' and 'ant.1.p' understanding and production (on WG form)? 
-But then why would there be 'ant.2.u' *and* 'ant.2.p'?
+Clean up names.
+
+```{r}
+wg_cols <- names(raw_wg)
+colnames(raw_wg) = raw_wg[1,]
+
+# wg_dem <- raw_wg[,c(1:23,574:576)] %>% # ToDo: calculate age from Timestamp - DOB ?
+#   rename(child_id = )
+# wg_voc <- raw_wg[,24:573]
+
+new_wg_names = paste0(names(wg_voc), ".p")
+
+names(wg_voc)[duplicated(names(wg_voc))]
+```
+
+There are `r length(intersect(new_wg_names, names(raw2)))` matching names for items, but there are also many that don't match between these data and the JISH data: `r setdiff(new_wg_names, names(raw2))`.
+
+Note also:
+* Are 'ant.1.u' and 'ant.1.p' understanding and production (on WG form)? But then why would there be 'ant.2.u' *and* 'ant.2.p'?
+* Some (3ish) duplicated items. 
+
+
+```{r}
+ggplot(raw_wg, aes(x = computed_age_mo, y = `Total understood words (8-16 mths)`)) + 
+  geom_point(alpha = .5) + 
+  xlab("Total comprehension") + 
+  ylab("Age (months)")
+           
+```
+```{r}
+ggplot(raw_wg, aes(x = computed_age_mo, y = `Total produced words (8-16 mths)`)) + 
+  geom_point()
+```
+
+### WS data
+
+Data format is difficult -- looks like each row (child) lists the items they know in each category, but NOT in the same columns...need to either iterate over each row and try to match the columns, or reformat by hand..
+
+
+```{r}
+raw_ws <- read_xlsx(path="raw_data/Alroqi et al. 2020 - Saudi CDI - WS - updated.xlsx", 
+                    sheet="Saudi CDI - WS") # 243 subjects
+```
+```{r}
+ggplot(raw_ws, aes(x = computed_age_mo, y = `Total produced words (17-36 mths)`)) +
+  geom_point(alpha = .5) 
+```
+Deal with weird data format. There are 896 columns on the form. 
+
+```{r}
+words <- unique(unlist(flatten(array(raw_ws[1:242,25:921]))))
+words <- words[!is.na(words)]
+
+ws <- tibble(subid = raw_ws$`#`) 
+ws[,words ] <- NA
+
+alroqi_prod <- raw_ws %>%
+  split(.$`#`) |>
+  map_df(function (df) {
+    this_vocab <- unique(unlist(flatten(df)))
+    
+    w <- filter(ws, subid == df$`#`) |>
+      mutate(across(-subid, ~ ifelse(cur_column() %in% this_vocab, 1, 0)))
+  })
+```
+
+Add back in demographics. 
+
+```{r}
+alroqi_full_prod <- left_join(processed_ws, 
+                          raw_ws |>
+                            rename(subid = `#`, 
+                                   gender = Gender, 
+                                   age_mo = computed_age_mo) |>
+                            select(subid, 
+                                   age_mo, 
+                                   gender)) 
+alroqi_full_prod$source <- "Alroqi"
+```
+
+## Merge usable production data. 
+
+First sync up meta-data. 
+
+```{r}
+jish_prod <- prod_voc <- prod_voc |>
+  mutate(subid = paste0("JISH", 1:n()))
+
+jish_demo <- d_demo |>
+  mutate(subid = paste0("JISH", 1:n()), 
+         gender = ifelse(gender == "1", "M", "F"), 
+         source = "JISH") |>
+  rename(age_mo = age) |>
+  select(subid, age_mo, gender, source)
+
+```
+
+Now sync up column names. 
+
+```{r}
+jnames <- names(jish_prod)
+anames <- names(alroqi_prod)
+jnames_nop <- str_replace(jnames, "\\.p", "")
+names(jish_prod) <- jnames_nop
+
+jish_full_prod <- left_join(jish_demo, jish_prod)
+jish_full_prod <- mutate(jish_full_prod, across(all_of(jnames_nop[jnames_nop != "subid"]), 
+                                                as.numeric)) 
+```
+
+We had `r length(jnames)` words in JISH and `r length(anames)` in Alroqi, so we will only keep the intersection of these for now. 
+
+Now bind!
+
+```{r}
+full_prod <- bind_rows(select(jish_full_prod, 
+                              c("source","subid","age_mo","gender", 
+                                intersect(jnames_nop,anames))),
+                       select(alroqi_full_prod, 
+                              c("source","subid","age_mo","gender", 
+                                intersect(jnames_nop,anames))))
+```
+
+
+Spot check computed totals. 
+
+```{r}
+full_prod <- full_prod |>
+  rowwise() |>
+  mutate(total = sum(c_across(sheep.sound:if.2)))
+```
+
+Plot. 
+
+```{r}
+ggplot(full_prod, aes(x = age_mo, y = total, col = source)) + 
+  geom_jitter(width = .2, height = 0, alpha = .5)
+```
+Let's filter various kids we don't think should be in here. 
+
+```{r}
+ggplot(filter(full_prod, age_mo >= 8, age_mo < 31), 
+       aes(x = age_mo, y = total, col = source)) + 
+  geom_jitter(width = .2, height = 0, alpha = .5) + 
+  geom_smooth()
+```
 
 
 # Data examination and cleaning
