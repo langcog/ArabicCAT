@@ -1,0 +1,489 @@
+---
+title: "Arabic CDI - data wrangling"
+author: "Mike & George"
+date: "6/23/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+require(tidyverse)
+require(mirt)
+require(readxl)
+require(kableExtra)
+```
+
+This markdown sequence documents data import of JISH and Alroqi datasets with the goals of :
+1. Data wrangling
+2. Short form creation
+3. CAT creation
+
+This particular document is just imports.
+
+# Data loading
+
+We have two datasets. The first is from JISH (JACDI). 
+
+## Load JISH Data
+
+Data received from Haifa Alroqi May 13, 2022 - JISH CDI (JACDI) norms
+
+The data file has WG and WS. Column BXW (`total.produce`) represents the total number of words produced by the whole sample.
+
+Column BXV (`total.understand`) represents the total number of words comprehended by, I think, the whole sample.
+
+I assume JISH initially used the vocabulary list of WS (which has the 550 words from WG and additional 348 words that are specific to WS) to collect data on both expressive and receptive vocabulary size of the whole sample.
+
+Columns BYG (age.months) and BYH (age.group) can help us distinguish between WG and WS. WG is for children aged 8-16 months; WS is for children aged 17-36 months.
+
+From the notes:
+
+* note there are red highlighted columns that were not included in the paper form (so maybe discard?)
+* also: "yellow highlight cells means we don't know what the word is in Arabic or we don't know what the column represents"
+
+
+MCF manual data fixes:
+
+* removed two instances of `unknown.word`
+* fixed missing `.p` for `swing.noun` and `water.plant`
+
+
+```{r load-data, eval = FALSE}
+raw_jish <- suppressMessages(read_xlsx(path="raw_data/JISH - CDI Data_updated.xlsx", 
+                                       sheet="JACDI Data"))
+save(file="cached_data/JACDI_arabic_data.Rds", "raw_jish")
+```
+
+Load from cache. 
+
+```{r}
+load("cached_data/JACDI_arabic_data.Rds")
+```
+
+
+Next we extract the items. 
+
+```{r create-item-dictionary}
+items <- bind_cols(definition = unlist(raw_jish[2,]), 
+                   uni_lemma = unlist(raw_jish[1,]), 
+                   category = names(raw_jish))
+
+# fill in item categories via an iterative approach
+for (i in (1:nrow(items))) {
+  if (i == 1) {
+    items$category[i] <- NA
+  } else if (str_detect(items$category[i], "\\.")) {
+    items$category[i] <- items$category[i-1]
+  } 
+}
+
+items <- items |>
+  slice(which(items$uni_lemma == "sheep.sound.u"):which(items$uni_lemma == "if.2.p")) |>
+  mutate(uni_lemma = str_sub(uni_lemma, start = 1, end = -3)) |>
+  distinct(uni_lemma, .keep_all=TRUE)
+
+DT::datatable(items)
+```
+
+Clean column names.
+
+```{r }
+col_names <- unlist(raw_jish[1,])
+col_names[which(is.na(col_names))] <- paste0("na.",1:23)
+cleaned_jish <- raw_jish
+names(cleaned_jish) = col_names
+
+```
+
+Now extract demographics and separate from production and comprehension data. 
+
+```{r }
+# last three columns are na.21 - na.23 - check and drop these?
+jish_demo <- cleaned_jish[3:nrow(cleaned_jish),c(1:7, 1985:2013)]  %>% 
+  mutate(age_mo = as.numeric(age.months),
+         production = as.numeric(total.produce),
+         comprehension = as.numeric(total.understand)) %>%
+  select(-age.months, -total.produce, -total.understand)
+```
+
+Finally, clean up the raw data.
+
+```{r}
+# remove pretend.parent, and imitate.adults
+idx_begin <- which(names(cleaned_jish)=="sheep.sound.u")
+idx_end <- which(names(cleaned_jish)=="if.2.p")
+cleaned_jish <- cleaned_jish[3:nrow(cleaned_jish), idx_begin:idx_end] 
+
+# now we need to separate production (".p") and comprehension (".c") columns
+jish_prod <- cleaned_jish[,which(endsWith(names(cleaned_jish), ".p"))]
+jish_comp <- cleaned_jish[,which(endsWith(names(cleaned_jish), ".u"))]
+
+```
+
+Check prod. 
+
+```{r}
+ggplot(jish_demo, aes(x = age_mo, y = production)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5) + 
+ xlab("Total production") + 
+ ylab("Age (months)")
+
+```
+
+Check comprehension. 
+
+```{r}
+ggplot(jish_demo, aes(x = age_mo, y = comprehension)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5) + 
+ xlab("Total comprehension") + 
+ ylab("Age (months)")
+
+```
+
+Compare production to comprehensin. 
+
+```{r}
+ggplot(jish_demo, aes(x = comprehension, y = production, col = age_mo)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5) + 
+  geom_smooth() + 
+  xlab("Total comprehension") + 
+  ylab("Total production")
+  
+
+```
+
+Compare to other comprehension. 
+
+```{r}
+
+db_args <- list(host = "wordbank2-dev.canyiscnpddk.us-west-2.rds.amazonaws.com",
+ dbname = "wordbank",
+ user = "wordbank_reader",
+ password = "ICanOnlyRead@99")
+mode <- "remote"
+
+
+admins <- bind_rows(wordbankr::get_administration_data(mode = mode, db_args = db_args, form = "WG", 
+ language = c("English (American)")),
+ wordbankr::get_administration_data(mode = mode, db_args = db_args, form = "WG", 
+ language = c("Korean")),
+ wordbankr::get_administration_data(mode = mode, db_args = db_args, form = "WG", 
+ language = c("Norwegian")), 
+ wordbankr::get_administration_data(mode = mode, db_args = db_args, form = "WG", 
+ language = c("Danish")))
+
+ggplot(admins, 
+ aes(x = age, y = comprehension)) + 
+ geom_jitter(width = .2, height = 0, alpha = .05) + 
+ facet_wrap(~language) + 
+ xlab("Total comprehension") + 
+ ylab("Age (months)")
+
+```
+Our tentative conclusion is that production up to 30 months looks OK although very low variance -- but we are worried about both comprehension data and 31--36 month production data. 
+
+## Alroqi data
+
+### WG data
+
+A new dataset received from Haifa Alroqi June 7, 2022 - 82 WG subjects
+
+```{r eval=TRUE}
+raw_alroqi_wg <- suppressMessages(read_xlsx(path="raw_data/Alroqi et al. 2020 - Saudi CDI - WG - updated.xlsx", sheet="Saudi CDI - WG"))
+# notes_wg <- read_xlsx(path="raw_data/Alroqi et al. 2020 - Saudi CDI - WG.xlsx", sheet="Notes")
+```
+
+Clean up names.
+
+```{r}
+wg_voc <- raw_alroqi_wg[,24:573]
+
+new_wg_names = paste0(names(wg_voc), ".p")
+
+names(wg_voc)[duplicated(names(wg_voc))]
+```
+
+There are some names here that don't match between the two datasets. We will have to leave these for now. 
+
+Note also:
+* Are 'ant.1.u' and 'ant.1.p' understanding and production (on WG form)? But then why would there be 'ant.2.u' *and* 'ant.2.p'?
+* Some (3ish) duplicated items. 
+
+```{r}
+unique(raw_alroqi_wg$Notes)
+
+raw_alroqi_wg <- mutate(raw_alroqi_wg, 
+ exclude = !is.na(Notes) | computed_age_mo < 8 | computed_age_mo > 18)
+
+alroqi_wg <- filter(raw_alroqi_wg, !exclude)
+```
+
+We exclude `r sum(raw_alroqi_wg$exclude)` of `r nrow(raw_alroqi_wg)` (`r round(sum(raw_alroqi_wg$exclude)/nrow(raw_alroqi_wg),2)*100`%).
+
+
+```{r}
+ggplot(alroqi_wg, 
+ aes(x = computed_age_mo, y = `Total understood words (8-16 mths)`)) + 
+ geom_point(alpha = .5) + 
+ xlab("Total comprehension") + 
+ ylab("Age (months)")
+
+```
+
+```{r}
+ggplot(alroqi_wg, aes(x = computed_age_mo, y = `Total produced words (8-16 mths)`)) + 
+ geom_point()
+```
+
+### WS data
+
+Data format is difficult -- looks like each row (child) lists the items they know in each category, but NOT in the same columns... 
+
+The `updated` file includes computed age, some removed formatting, and manually removed duplicates.
+
+
+```{r eval=FALSE}
+raw_alroqi_ws <- suppressMessages(read_xlsx(path="raw_data/Alroqi et al. 2020 - Saudi CDI - WS - updated.xlsx", 
+ sheet="Saudi CDI - WS")) 
+
+save(file="cached_data/Alroqi_WS_arabic_data.Rds", "raw_alroqi_ws")
+```
+
+Reload so we don't have to do this again. 
+
+```{r}
+load("cached_data/Alroqi_WS_arabic_data.Rds")
+```
+
+Exclusions. 
+
+```{r}
+unique(raw_alroqi_ws$Notes)
+hist(raw_alroqi_ws$computed_age_mo)
+
+raw_alroqi_ws <- mutate(raw_alroqi_ws, 
+ exclude = !is.na(Notes) | computed_age_mo < 12 | computed_age_mo > 36)
+
+alroqi_ws <- filter(raw_alroqi_ws, !exclude)
+```
+
+Now plot. 
+
+```{r}
+ggplot(alroqi_ws, aes(x = computed_age_mo, y = `Total produced words (17-36 mths)`)) +
+ geom_point(alpha = .5) 
+```
+Deal with weird data format. There are 896 columns on the form. 
+
+```{r}
+words <- unique(unlist(flatten(array(alroqi_ws[1:242,25:921]))))
+words <- words[!is.na(words)]
+
+ws <- tibble(subid = alroqi_ws$`#`) 
+ws[,words ] <- NA
+
+alroqi_ws_corrected <- alroqi_ws %>%
+ split(.$`#`) |>
+ map_df(function (df) {
+ this_vocab <- unique(unlist(flatten(df)))
+ 
+ w <- filter(ws, subid == df$`#`) |>
+ mutate(across(-subid, ~ ifelse(cur_column() %in% this_vocab, 1, 0)))
+ })
+```
+
+Add back in demographics. 
+
+```{r}
+alroqi_ws_corrected <- left_join(alroqi_ws_corrected, 
+                                 alroqi_ws |>
+                                   rename(subid = `#`, 
+                                          gender = Gender, 
+                                          age_mo = computed_age_mo) |>
+                                   select(subid, 
+                                          age_mo, 
+                                          gender)) 
+alroqi_ws_corrected$source <- "Alroqi"
+```
+
+## Merge usable production data. 
+
+First sync up meta-data. 
+
+```{r}
+
+jish_demo <- jish_demo |>
+ mutate(subid = paste0("JISH", 1:n()), 
+        gender = ifelse(gender == "1", "M", "F"), 
+        source = "JISH") |>
+  select(subid, age_mo, gender, source)
+
+```
+
+Now sync up column names. 
+
+```{r}
+jnames <- names(jish_prod)
+anames <- names(alroqi_ws_corrected)
+jnames_nop <- str_sub(jnames, start = 1, end = -3)
+
+names(jish_prod) <- jnames_nop
+
+jish_prod <- jish_prod |>
+ mutate(subid = paste0("JISH", 1:n()))
+
+
+jish_full_prod <- left_join(jish_demo, jish_prod)
+jish_full_prod <- mutate(jish_full_prod, 
+                         across(all_of(jnames_nop[jnames_nop != "subid"]), 
+                                as.numeric)) 
+```
+
+We had `r length(jnames)` words in JISH and `r length(anames)` in Alroqi, so we will only keep the intersection of these for now. 
+
+Now bind!
+
+```{r}
+full_prod <- bind_rows(select(jish_full_prod, 
+                              c("source","subid","age_mo","gender", 
+                                intersect(jnames_nop,anames))),
+                       select(alroqi_ws_corrected, 
+                              c("source","subid","age_mo","gender", 
+                                intersect(jnames_nop, anames))))
+```
+
+
+Spot check computed totals. 
+
+```{r}
+full_prod <- full_prod |>
+ rowwise() |>
+ mutate(total = sum(c_across(sheep.sound:if.2)))
+```
+
+Plot. 
+
+```{r}
+ggplot(full_prod, aes(x = age_mo, y = total, col = source)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5)
+```
+
+Let's consider filtering various kids we don't think should be in here. 
+
+```{r}
+ggplot(filter(full_prod, age_mo >= 8, age_mo < 31), 
+ aes(x = age_mo, y = total, col = source)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5) + 
+ geom_smooth()
+```
+
+We are not sure about whether to remove the children > 30 months. Let's leave them for now as we will need to collect new norming data in any case. Maybe they provide some small amount of item information.
+
+```{r}
+save(file = "cached_data/all_arabic_production.Rds", "full_prod", "items")
+```
+
+# Merge comprehension data
+
+
+Correct Alroqi WG.
+
+```{r}
+# ["sheep.sound":"if"]
+anames <- names(alroqi_wg)
+anames <- tolower(anames)
+anames <- str_replace(anames, "\\.\\.\\.[0-9][0-9][0-9]", "")
+names(alroqi_wg) <- anames
+
+# remove duplicated names
+alroqi_wg <- alroqi_wg[anames[!duplicated(anames)]] 
+anames <- names(alroqi_wg)
+
+```
+
+get comprehension. 
+
+```{r}
+alroqi_wg_corrected <- alroqi_wg |>
+  rename(subid = id, 
+         gender = gender, 
+         age_mo = computed_age_mo) |>
+  mutate(source = "alroqi",
+         across(all_of(anames[25:570]),
+                ~!is.na(.x)))
+```
+
+Clean up JISH comp. 
+
+```{r}
+jnames <- names(jish_comp)
+jnames_nou <- str_sub(jnames, start = 1, end = -3)
+
+names(jish_comp) <- jnames_nou
+
+jish_comp <- jish_comp |>
+ mutate(subid = paste0("JISH", 1:n()))
+
+
+jish_full_comp <- left_join(jish_demo, jish_comp)
+jish_full_comp <- mutate(jish_full_comp, 
+                         across(all_of(jnames_nou[jnames_nou != "subid"]), 
+                                as.numeric)) 
+```
+
+
+
+
+
+```{r}
+full_comp <- bind_rows(select(jish_full_comp, 
+                              c("source","subid","age_mo","gender", 
+                                intersect(jnames_nou,anames))),
+                       select(alroqi_wg_corrected, 
+                              c("source","subid","age_mo","gender", 
+                                intersect(jnames_nou, anames))))
+```
+
+
+Spot check computed totals. 
+
+```{r}
+full_comp <- full_comp |>
+ rowwise() |>
+ mutate(total = sum(c_across(sheep.sound:also)))
+```
+
+Plot. 
+
+```{r}
+ggplot(full_comp, aes(x = age_mo, y = total, col = source)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5)
+```
+
+Let's consider filtering various kids we don't think should be in here. 
+
+```{r}
+ggplot(filter(full_comp, age_mo >= 8, age_mo < 31,
+              !(age_mo < 20 & total > 400)), 
+ aes(x = age_mo, y = total, col = source)) + 
+ geom_jitter(width = .2, height = 0, alpha = .5) + 
+ geom_smooth()
+```
+
+For comprehension, let's do a full filter. 
+
+```{r}
+full_comp <- filter(full_comp, age_mo >= 8, age_mo < 31,
+              !(age_mo < 20 & total > 400))
+```
+
+Filter items.
+
+```{r}
+items_comp <- filter(items, uni_lemma %in% names(full_comp))
+```
+
+```{r}
+save(file = "cached_data/all_arabic_comprehension.Rds", "full_comp", "items_comp")
+
+```

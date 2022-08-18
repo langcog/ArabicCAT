@@ -1,0 +1,401 @@
+---
+title: "Arabic CDI - Short Forms - comprehension"
+author: "Mike & George"
+date: '2022-08-1'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+require(tidyverse)
+require(mirt)
+require(kableExtra)
+library(permute)
+source("IRT_helpers.R")
+```
+
+This markdown sequence documents data import of JISH and Alroqi datasets with the goals of:
+1. Data wrangling
+2. Short form creation
+3. CAT creation
+
+This particular document uses the combined Alroqi and JISH data to try and create an informative and useful short forms. 
+
+Load data. 
+
+```{r}
+load(file = "cached_data/all_arabic_comprehension.Rds")
+```
+
+# Psychometric modeling
+
+Prepare data. 
+
+```{r}
+d_comp <- select(full_comp, "sheep.sound":"also")
+words <- names(d_comp)
+d_mat <- as.matrix(d_comp)
+```
+
+
+```{r psycho-models_1pl, echo=F, eval = FALSE}
+set.seed(1234)
+
+mod_1pl <- mirt(d_mat, 1, itemtype='Rasch', verbose=TRUE, technical=list(NCYCLES=1000))
+
+coefs_1pl <- as_tibble(coef(mod_1pl, simplify = TRUE)$items) %>%
+ mutate(definition = rownames(coef(mod_1pl, simplify = TRUE)$items))
+fscores_1pl <- tibble(data_id = rownames(d_mat),
+ ability = fscores(mod_1pl, method = "MAP")[,1])
+
+save(file = "cached_data/arabic_mod_1pl_comp.Rds", "mod_1pl", "fscores_1pl", "coefs_1pl")
+```
+
+```{r psycho-2pl_coefs, echo=F, eval = FALSE}
+mod_2pl <- mirt(d_mat, 1, itemtype='2PL', verbose=TRUE, technical=list(NCYCLES=3000))
+
+coefs_2pl <- as_tibble(coef(mod_2pl, simplify = TRUE)$items) %>%
+ mutate(definition = rownames(coef(mod_2pl, simplify = TRUE)$items))
+fscores_2pl <- tibble(data_id = rownames(d_mat),
+ ability = fscores(mod_2pl, method = "MAP")[,1])
+
+save(file = "cached_data/arabic_mod_2pl_comp.Rds", "mod_2pl","fscores_2pl", "coefs_2pl")
+```
+
+
+```{r psycho-fit_irt_3pl, echo=F, eval = FALSE}
+mod_3pl <- mirt::mirt(d_mat, 1, itemtype='3PL', verbose=TRUE,
+ technical=list(NCYCLES=4000))
+
+coefs_3pl <- as_tibble(coef(mod_3pl, simplify = TRUE)$items) %>%
+ mutate(definition = rownames(coef(mod_3pl, simplify = TRUE)$items))
+fscores_3pl <- tibble(data_id = rownames(d_mat),
+ ability = fscores(mod_3pl, method = "MAP")[,1])
+
+save(file = "cached_data/arabic_mod_3pl_comp.Rds", "mod_3pl","fscores_3pl", "coefs_3pl")
+```
+
+
+
+```{r psycho-models_load, echo=F}
+load("cached_data/arabic_mod_1pl_comp.Rds")
+load("cached_data/arabic_mod_2pl_comp.Rds")
+load("cached_data/arabic_mod_3pl_comp.Rds")
+```
+
+
+## Model comparison.
+
+
+```{r, anovas, include=F}
+
+mc1 <- get_anova_table(mod_1pl, mod_2pl, c("Rasch", "2PL"))
+mc2 <- get_anova_table(mod_2pl, mod_3pl, c("2PL", "3PL"))
+```
+
+Compared to the Rasch model, the 2PL model fits better and is preferred by both AIC and BIC.
+
+
+```{r, echo=F}
+kable(mc1, digits=2,
+ caption="Comparison of Rasch and 2PL models.") %>%
+ html_table_width(c(60, 80, 80, 80, 50))
+```
+
+The 2PL is favored over the 3PL model.
+
+
+```{r, echo=F}
+kable(mc2, digits=2,
+ caption="Comparison of 2PL and 3PL models.") %>%
+ html_table_width(c(60, 80, 80, 80, 50))
+```
+
+We do the rest of our analyses using the 2PL model as the basis.
+
+## Plot 2PL Coefficients
+ 
+Next, we examine the coefficients of the 2PL model.
+
+Items that are estimated to be very easy (e.g., mommy, daddy, ball) or very difficult (would, were, country) are highlighted, as well as those at the extremes of discrimination (a1).
+ 
+We remove the "bad items" identified above. 
+
+```{r}
+coefs_2pl <- as_tibble(coef(mod_2pl, simplify = TRUE)$items) %>%
+  mutate(definition = rownames(coef(mod_2pl, simplify = TRUE)$items)) |>
+  ungroup()
+
+ggplot(coefs_2pl,
+       aes(x = a1, y = -d)) + 
+  geom_point(alpha = .3) + 
+  ggrepel::geom_text_repel(data = filter(coefs_2pl, 
+                                a1 < 1 | a1 > 3.8 | -d > 5 | -d < -2.5), 
+                  aes(label = definition), size = 2, 
+                  show.legend = FALSE) + 
+  xlab("Discrimination") + 
+  ylab("Difficulty")
+```
+
+# Short form construction
+
+Goal is to create a 100 item test with the best items for a given age/ability range. 
+
+Let's find our estimated abilities and see how they relate to age. 
+
+```{r}
+# qplot(x = full_comp$age_mo, 
+      # y = fscores_2pl$ability, 
+      # col = full_comp$source, geom = "point" ) +
+  # geom_smooth()
+```
+
+So we would like a range of abilities from about -2.5 to 4. Here's our resulting test information curve. 
+
+```{r}
+theta <- matrix(seq(-2.5,4,.01))
+tinfo <- testinfo(mod_2pl, theta)
+plot(theta, tinfo, type = 'l')
+sum(tinfo)
+```
+
+Let's try making some random 100-item subtests. 
+
+```{r}
+coefs_2pl <- mutate(coefs_2pl, idx = 1:n())
+  
+tinfo_random_100 <- tibble(n = 1:1000) %>%
+  split(.$n) |>
+  map_df(function(x) {
+    tibble(theta = as.vector(theta), 
+           testinfo = testinfo(mod_2pl, theta, 
+                               which.items = slice_sample(coefs_2pl, n = 100) |>
+                                 pull(idx)),
+           n = x$n)
+  })
+
+
+tinfo_random_summary <- tinfo_random_100 |>
+  group_by(n) |>
+  summarise(testinfo = sum(testinfo)) 
+
+ggplot(tinfo_random_summary, 
+       aes(x = testinfo)) + 
+  geom_histogram()
+
+```
+The mean random test information is `r mean(tinfo_random_summary$testinfo)`.
+
+Now let's try selecting high discrimination items. 
+
+```{r}
+top_desc <- arrange(coefs_2pl, desc(a1)) |>
+  slice(1:100) |>
+  pull(definition)
+
+top_desc_idx <- which(words %in% top_desc)
+
+tinfo_top_desc <- testinfo(mod_2pl, theta, which.items = top_desc_idx)
+plot(theta, tinfo_top_desc, type = 'l')
+```
+
+The best test selecting based on discrimination has test information of `r sum(tinfo_top_desc)`. That gives us an upper bound on item information. 
+
+Now let's try to do some kind of optimization. Our constraints are:
+
+* We want diverse representations across categories
+* We want good coverage across age
+
+Let's look at test information for each of the categories first. 
+
+```{r}
+coefs_2pl <- left_join(coefs_2pl, 
+                       items_comp |>
+                         select(-definition) |>
+                         rename(definition = uni_lemma) |>
+                         select(definition, category))
+coefs_2pl$idx <- 1:nrow(coefs_2pl)
+
+
+cat_info <- tibble(cat = unique(coefs_2pl$category)) |>
+  group_by(cat) |>
+  mutate(data = list(tibble(theta = as.vector(theta), 
+                            testinfo = testinfo(mod_2pl, theta, 
+                                                which.items = filter(coefs_2pl, 
+                                                                     category == cat) |>
+                                                  pull(idx)),
+                            n = nrow(filter(coefs_2pl, category == cat))))) |>
+  unnest(cols = "data")
+
+ggplot(cat_info, aes(x = theta, y= testinfo/n)) + 
+  geom_line() + 
+  facet_wrap(~cat) + 
+  ggtitle("Test information per word for different sections")
+
+```
+We have 20 categories, but many of them are not so good. Let's remove the bad ones. 
+
+```{r}
+cat_info_summary <- cat_info |>
+  group_by(cat) |>
+  summarise(testinfo = sum(testinfo)) |>
+  mutate(cat = fct_reorder(cat, testinfo)) 
+
+cat_info_summary |>
+  ggplot(aes(x = cat, y = testinfo)) +
+  geom_point() + 
+  coord_flip()
+
+good_cats <- filter(cat_info_summary, testinfo > 2500) |> pull(cat)
+```
+
+Let's look at those cats.
+
+```{r}
+by_category_max_sd <- coefs_2pl |>
+  ungroup() |>
+  filter(category %in% good_cats) %>%
+  split(.$category) |>
+  map_df(function (cat) {
+    
+    perms <- tibble(n = 1:100) %>%
+      split(.$n) |>
+      map_df(function (x) {
+        slice_sample(cat, n=5) |>
+          mutate(score = sd(d) + mean(a1),
+                 n = x$n)
+      })
+    
+    filter(perms, score == max(score))
+  })
+  
+by_cat_max_sd_test_info <- testinfo(mod_2pl, theta, which.items = by_category_max_sd$idx)
+```
+
+Let's try just maximizing discrimination within category. 
+
+```{r}
+by_category_max_desc <- coefs_2pl |>
+  ungroup() |>
+  filter(category != "Sound Effects and Animal Sounds") %>%
+  split(.$category) |>
+  map_df(function (cat) {
+    
+    arrange(cat, desc(a1)) |>
+      slice(1:5)
+  })
+
+by_cat_max_desc_test_info <- testinfo(mod_2pl, theta, which.items = by_category_max_desc$idx)
+```
+
+How about adding the easiest one in each category and then doing the four most discriminating.
+
+```{r}
+by_category_max_desc_one_easy <- coefs_2pl |>
+  ungroup() |>
+  filter(category != "Sound Effects and Animal Sounds") %>%
+  split(.$category) |>
+  map_df(function (cat) {
+    
+    # do this so we definitely get 5 even if the two conditions overlap
+    filter(cat, d==max(d) | a1 >= sort(a1, decreasing=TRUE)[5]) |>
+      arrange(desc(d)) |>
+      slice(1:5)
+      
+  })
+
+by_category_max_desc_one_easy_test_info <- testinfo(mod_2pl, theta, 
+                                                    which.items = by_category_max_desc_one_easy$idx)
+```
+
+
+Now compare these. 
+
+```{r}
+sf_vs_best <- tibble(theta = theta, 
+                     `balance discrim and difficulty by category` = by_cat_max_sd_test_info, 
+                     `one easy plus most discrim by category` = by_category_max_desc_one_easy_test_info,
+                     `most discrim by category` = by_cat_max_desc_test_info, 
+                     `most discrim overall` = tinfo_top_desc, 
+                     `random` = tinfo_random_100 |> 
+                       group_by(theta) |> 
+                       summarise(testinfo = mean(testinfo)) |> 
+                       pull(testinfo)) |>
+  pivot_longer(-theta, names_to = "selection", values_to = "test_information")
+                       
+                       
+ggplot(sf_vs_best, 
+       aes(x = theta, 
+           y = test_information, col = selection)) + 
+  geom_line() 
+  
+```
+
+Let's adopt the most discrim by category option here since it is generally better...
+
+# Examine resulting items
+
+```{r}
+short_metrics <- full_comp |>
+  rowwise() |>
+  mutate(top_desc = sum(c_across(cols = coefs_2pl$definition[top_desc_idx])),
+    by_cat = sum(c_across(cols = 
+                              coefs_2pl$definition[by_category_max_desc$idx]))) |>
+  select(subid, age_mo, total, top_desc, by_cat)
+
+short_metrics_long <- short_metrics |>
+  pivot_longer(top_desc:by_cat, names_to = "selection", values_to = "estimate")
+  
+
+ggplot(short_metrics_long, aes(x = total, y = estimate)) +
+  geom_point(alpha = .25) +
+  geom_smooth() + 
+  geom_abline(lty = 2, slope = 100/length(coefs_2pl$definition)) +
+  facet_wrap(~selection)
+```
+
+Correlations. 
+
+```{r}
+cor.test(short_metrics$total, short_metrics$top_desc)
+with(filter(short_metrics, age_mo <= 18), 
+     cor.test(total, top_desc))
+
+```
+Correlations are very high for the whole sample, but lower for younger kids. 
+
+```{r}
+cor.test(short_metrics$total, short_metrics$by_cat)
+with(filter(short_metrics, age_mo <= 18), 
+     cor.test(total, by_cat))
+```
+Our corrected test ("by cat") does substantially better with the younger kids. 
+
+What's in that test? 
+
+```{r}
+filter(coefs_2pl, idx %in% by_category_max_desc_one_easy$idx) |>
+  select(definition, category, d, a1) |>
+  DT::datatable()
+```
+
+We can maybe do better by removing some redundancy (e.g. toy/toys), but this doesn't look totally crazy. 
+
+# Output items
+
+```{r}
+item_params <- left_join(coefs_2pl, 
+                         items_comp |> 
+                           select(definition, uni_lemma) |>
+                           rename(arabic = definition, 
+                                  definition = uni_lemma)) |>
+  rename(difficulty = d, 
+         discrimination = a1) |>
+  select(idx, category, arabic, definition, difficulty, discrimination)
+
+write_csv(item_params, "full_word_list_with_parameters_comp.csv")
+write_csv(filter(item_params, 
+                 idx %in% by_category_max_desc$idx), 
+          "candidate_100_item_production_form_list_comps.csv")
+```
+
