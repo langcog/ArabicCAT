@@ -27,6 +27,18 @@ Load data.
 load(file = "cached_data/all_arabic_production.Rds")
 ```
 
+Descriptives. 
+
+```{r}
+full_prod |>
+  group_by(source) |>
+  summarise(n = n(), 
+            mean_age = mean(age_mo), 
+            min_age = min(age_mo), 
+            max_age = max(age_mo))
+```
+
+
 # Psychometric modeling
 
 Prepare data. 
@@ -409,10 +421,10 @@ Now compare these.
 
 ```{r}
 sf_vs_best <- tibble(theta = theta, 
-                     `balance discrim and difficulty by category` = by_cat_max_sd_test_info, 
-                     `one easy plus most discrim by category` = by_category_max_desc_one_easy_test_info,
-                     `most discrim by category` = by_cat_max_desc_test_info, 
-                     `most discrim overall` = tinfo_top_desc, 
+                     `balance discrimination and difficulty by category` = by_cat_max_sd_test_info, 
+                     `one easy item plus most discriminating by category` = by_category_max_desc_one_easy_test_info,
+                     `most discriminating by category` = by_cat_max_desc_test_info, 
+                     `most discriminating overall` = tinfo_top_desc, 
                      `random` = tinfo_random_100 |> 
                        group_by(theta) |> 
                        summarise(testinfo = mean(testinfo)) |> 
@@ -423,7 +435,12 @@ sf_vs_best <- tibble(theta = theta,
 ggplot(sf_vs_best, 
        aes(x = theta, 
            y = test_information, col = selection)) + 
-  geom_line() 
+  geom_line() + 
+  ggthemes::scale_color_solarized(name = "Selection model") +
+  ggthemes::theme_few() + 
+  ylab("Test information") +
+  theme(legend.position = "bottom") + 
+  guides(colour = guide_legend(nrow = 5))
   
 ```
 
@@ -490,6 +507,18 @@ item_params <- left_join(coefs_2pl,
 write_csv(item_params, "full_word_list_with_parameters.csv")
 write_csv(filter(item_params, 
                  idx %in% by_category_max_desc_one_easy$idx), 
-          "candidate_100_item_production_form_lists.csv")
+          "candidate_100_item_production_form_lists.csv") 
+```
+
+Write table
+
+```{r}
+item_params |>
+  group_by(category) |>
+  mutate(in_short_form = idx %in% by_category_max_desc_one_easy$idx) |>
+  summarise(`# of items` = n(),
+            `% of total` = 100*`# of items`/nrow(item_params), 
+            `# in short form` = sum(in_short_form))|>
+  knitr::kable(digits = 2)
 ```
 

@@ -1,0 +1,393 @@
+---
+title: "Percentiles"
+author: "Arabic CDI team"
+date: "2023-4-27"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+The goal of this markdown is to show demographic data analyses and percentile tables for the YNMO short form CDI data. 
+
+# Preliminaries
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+library(gamlss)
+require(tidyverse)
+require(mirt)
+require(readxl)
+library(here)
+select <- dplyr::select
+```
+
+Read in data. 
+
+```{r}
+ynmo1 <- suppressMessages(read_xlsx(path="raw_data/YNMO/Ynmo Norms Part 1 Sept 2022 - Final.xlsx", 
+                                       sheet="Part 1 responses")) |>
+  mutate(part = 1)
+ynmo2 <- suppressMessages(read_xlsx(path="raw_data/YNMO/Ynmo Norms Part 2 Jan 2023 - Final .xlsx", 
+                                       sheet=" Part 2 responses")) |>
+  mutate(part = 2)
+ynmo3 <- suppressMessages(read_xlsx(path="raw_data/YNMO/Ynmo Norms Part 3 Jan 2023 -Final.xlsx", 
+                                       sheet="Part 3 Responses - Ynmo app")) |>
+  mutate(part = 3)
+
+raw_ynmo <- bind_rows(ynmo1, ynmo2, ynmo3)
+```
+
+Consider ages in the removed data. 
+
+```{r}
+qplot(raw_ynmo$age_in_months, fill = as.factor(raw_ynmo$part), binwidth = 6)
+```
+
+
+
+```{r}
+ynmo <- raw_ynmo |> slice(-1) 
+
+demo <- ynmo |>
+  select(subject_ID : disability_or_language_disorders_other_family)
+
+ynmo_wg <- ynmo |>
+  filter(!(`cat...117` %in% c("yes","no"))) |>
+  mutate(form = "WG")
+
+ynmo_ws <- ynmo |>
+  filter(`cat...117` %in% c("yes","no")) |>
+  mutate(form = "WS")
+```
+
+Overall totals.
+
+```{r}
+bind_rows(ynmo_wg, ynmo_ws) |>
+  group_by(form) |>
+  count() |>
+  knitr::kable()
+```
+
+By part and form totals.
+
+```{r}
+bind_rows(ynmo_wg, ynmo_ws) |>
+  group_by(part, form) |>
+  count() |>
+  knitr::kable()
+```
+
+
+# Words and Gestures
+
+There is not enough data on WG to move froward yet. 
+
+```{r}
+ynmo_wg_long <- ynmo_wg |>
+  select(subject_ID, age_in_months, sex, `cat...25`:`also...116`) |>
+  pivot_longer( `cat...25`:`also...116`, names_to = "item", values_to = "value") |>
+  mutate(produces = ifelse(value %in% "produces", 1, 0), 
+         understands = ifelse(value %in% c("understands","produces"), 1, 0))
+
+
+ynmo_wg_ms <- ynmo_wg_long |>
+  group_by(subject_ID, age_in_months, sex) |>
+  summarise(understands = sum(understands), 
+            produces = sum(produces))
+```
+
+## Production
+
+92 items on wg, 100 on WS
+
+```{r}
+max_vocab = 92
+quantiles = c(10, 25, 50, 75, 90)
+
+ynmo_wg_ms$understands_01 <- .001 + ynmo_wg_ms$understands/(max_vocab+1) 
+ynmo_wg_ms$produces_01 <- .001 + ynmo_wg_ms$produces/(max_vocab+1) 
+
+prod_mod_data <- filter(ynmo_wg_ms, age_in_months >= 8, age_in_months < 24)
+
+ynmo_wg_prod_mod <- gamlss(produces_01 ~ pbm(age_in_months, lambda = 10000),
+              sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+              family = BE, 
+              control = gamlss.control(c.crit = .1),
+              data = prod_mod_data)
+
+centiles <- centiles.pred(ynmo_wg_prod_mod, cent = quantiles,
+              xname = "age_in_months", xvalues = 8:18) |>
+  rename(age_in_months = x) |>
+  pivot_longer(-age_in_months, names_to = "percentile", values_to = "predicted") |>
+  mutate(predicted = (predicted * (max_vocab+1)) - .001) 
+```
+
+
+```{r}
+ggplot(prod_mod_data, aes(x = age_in_months, y = produces)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_line(data = centiles, aes(x = age_in_months, y = predicted, col = percentile)) +
+  xlim(8,18)
+```
+
+
+## Comprehension
+
+```{r}
+comp_mod_data <- filter(ynmo_wg_ms, age_in_months >= 8, age_in_months < 24)
+
+ynmo_wg_comp_mod <- gamlss(understands_01 ~ pbm(age_in_months, lambda = 10000),
+              sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+              family = BE, 
+              control = gamlss.control(c.crit = .1),
+              data = comp_mod_data)
+
+centiles <- centiles.pred(ynmo_wg_comp_mod, cent = quantiles,
+              xname = "age_in_months", xvalues = 8:18) |>
+  rename(age_in_months = x) |>
+  pivot_longer(-age_in_months, names_to = "percentile", values_to = "predicted") |>
+  mutate(predicted = (predicted * (max_vocab+1)) - .001) 
+
+ggplot(ynmo_wg_ms, aes(x = age_in_months, y = understands)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_line(data = centiles, aes(x = age_in_months, y = predicted, col = percentile)) + xlim(8,18)
+```
+
+# Words and Sentences
+
+```{r}
+ynmo_ws_long <- ynmo_ws |>
+  select(subject_ID, age_in_months, sex, `cat...117`:`if.2`, combine_words) |>
+  pivot_longer( `cat...117`:`if.2`, names_to = "item", values_to = "value") |>
+  mutate(produces = ifelse(value %in% "yes", 1, 0))
+
+
+ynmo_ws_ms <- ynmo_ws_long |>
+  group_by(subject_ID, age_in_months, sex) |>
+  summarise(produces = sum(produces), combine_words = combine_words[1])
+
+ggplot(filter(ynmo_ws_ms, age_in_months >= 16, age_in_months <= 36), 
+       aes(x = age_in_months, y = produces)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_smooth() 
+```
+
+Consider sex effects.
+
+```{r}
+ggplot(filter(ynmo_ws_ms, age_in_months >= 16, age_in_months <= 36), 
+       aes(x = age_in_months, y = produces, col = sex)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_smooth() 
+```
+
+Now with percentiles. 
+
+```{r}
+max_vocab = 100
+quantiles = c(10, 25, 50, 75, 90)
+
+ynmo_ws_ms$produces_01 <- .001 + ynmo_ws_ms$produces/(max_vocab+1) 
+
+
+ws_mod_data <- filter(ynmo_ws_ms, age_in_months >= 16, age_in_months <= 36)
+
+ynmo_ws_prod_mod <- gamlss(produces_01 ~ pbm(age_in_months, lambda = 10000),
+              sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+              family = BE, 
+              control = gamlss.control(c.crit = .1),
+              data = ws_mod_data)
+
+centiles <- centiles.pred(ynmo_ws_prod_mod, cent = quantiles,
+              xname = "age_in_months", xvalues = 16:36) |>
+  rename(age_in_months = x) |>
+  pivot_longer(-age_in_months, names_to = "percentile", values_to = "predicted") |>
+  mutate(predicted = (predicted * (max_vocab+1)) - .001) 
+
+
+ggplot(ynmo_ws_ms, aes(x = age_in_months, y = produces)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_line(data = centiles, aes(x = age_in_months, y = predicted, col = percentile)) + 
+  xlim(16,36) +
+  ylab("Total productive vocabulary") + 
+  xlab("Age (months)") +
+  scale_color_discrete(name = "Percentile") + 
+  ggthemes::theme_few()
+
+ggsave(here("graphs","percentiles.png"), width = 6, height = 4)
+```
+
+
+```{r}
+
+ynmo_ws_prod_sex_mod <- gamlss(produces_01 ~ pbm(age_in_months, lambda = 10000) * sex,
+              sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+              family = BE, 
+              control = gamlss.control(c.crit = .1),
+              data = ws_mod_data)
+
+pred_data <- expand_grid(age_in_months = 16:36, 
+                         sex = c("male","female"))
+pred_data$pred <- predict(ynmo_ws_prod_sex_mod, 
+                          type = "response",
+                          newdata = pred_data) 
+
+pred_data <- pred_data |>
+  mutate(vocab_pred = (pred * (max_vocab+1)) - .001, 
+         sex = ifelse(sex == "female","Female","Male")) 
+
+
+ggplot(ynmo_ws_ms |>
+         mutate(sex = ifelse(sex == "female","Female","Male")),
+       aes(x = age_in_months, y = produces, col = sex)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_line(data = pred_data, aes(x = age_in_months, 
+                                  y = vocab_pred, col = sex)) + 
+  xlim(16,36) +
+  ylab("Total productive vocabulary") + 
+  xlab("Age (months)") +
+  ggthemes::scale_color_solarized(name = "Sex") + 
+  ggthemes::theme_few()
+
+ggsave(here("graphs","sex.png"), width = 6, height = 4)
+```
+
+
+## Combining words
+
+```{r}
+combines_data <- ws_mod_data |>
+  mutate(`not yet` = ifelse(combine_words == "not yet", 1, 0),
+         sometimes = ifelse(combine_words == "sometimes", 1, 0), 
+         often = ifelse(combine_words == "often", 1, 0)) |>
+  pivot_longer(`not yet`:often, names_to = "combines_words", 
+               values_to = "value") |>
+  mutate(combines_words = factor(combines_words, levels = c("not yet","sometimes","often")))
+
+ggplot(combines_data, 
+       aes(x = age_in_months, y = value, col = combines_words)) + 
+  geom_smooth(method = "glm", formula = y ~ x, method.args = list(family = "binomial")) + 
+  ylab("Proportion of children") + 
+  xlab("Age (months)") +
+  ggthemes::scale_color_solarized(name = "Combines words") + 
+  ggthemes::theme_few()
+
+ggsave(here("graphs","combines.png"), width = 6, height = 4)
+
+```
+
+
+
+
+```{r}
+ynmo_ws_prod_combine_mod <- gamlss(produces_01 ~ pbm(age_in_months, lambda = 10000) + combine_words,
+              sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+              family = BE, 
+              control = gamlss.control(c.crit = .1),
+              data = ws_mod_data)
+
+pred_data <- expand_grid(age_in_months = 16:36, 
+                         combine_words = c("not yet","sometimes","often"))
+pred_data$pred <- predict(ynmo_ws_prod_combine_mod, 
+                          type = "response",
+                          newdata = pred_data) 
+
+pred_data <- pred_data |>
+  mutate(vocab_pred = (pred * (max_vocab+1)) - .001) |>
+  mutate(combine_words = factor(combine_words, 
+  levels = c("not yet","sometimes","often")))
+
+
+ggplot(ynmo_ws_ms |>
+  mutate(combine_words = factor(combine_words, 
+                                levels = c("not yet",
+                                           "sometimes","often"))), 
+  aes(x = age_in_months, y = produces, 
+                       col = combine_words)) + 
+  geom_jitter(width = .2, height = 0, alpha = .2) + 
+  geom_line(data = pred_data, aes(x = age_in_months, 
+                                  y = vocab_pred, col = combine_words)) + 
+  xlim(16,36) +
+  ylab("Total productive vocabulary") + 
+  xlab("Age (months)") +
+  ggthemes::scale_color_solarized(name = "Combines words") + 
+  ggthemes::theme_few()
+
+ggsave(here("graphs","combine_vocab.png"), width = 6, height = 4)
+```
+
+```{r}
+summary(ynmo_ws_prod_combine_mod)
+```
+
+
+
+# other analysis
+
+Compute MADM. 
+
+```{r}
+ynmo_ws_ms |>
+  mutate(age_binned = floor(age_in_months / 2)*2) |>
+  group_by(age_binned) |>
+  summarise(madm = mean(abs(produces - median(produces))) / median(produces)) |>
+  ggplot(aes(x = age_binned, y = madm)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+
+```
+
+Output percentile tables
+
+```{r}
+all_quants = seq(5,95,5)
+
+cents <- centiles.pred(ynmo_ws_prod_mod, cent = all_quants,
+              xname = "age_in_months", xvalues = 16:36) |>
+  rename(age_in_months = x) |>
+  pivot_longer(-age_in_months, names_to = "percentile", values_to = "produces") |>
+  mutate(produces = round((produces * (max_vocab+1)) - .001), 
+         produces = ifelse(produces > 100, 100, produces))  |>
+  pivot_wider(names_from = "percentile", values_from = "produces")
+
+write_csv(cents, "wg_centiles_2023-05-04.csv")
+```
+
+Output percentile tables
+
+```{r}
+
+ws_mod_data_m <- filter(ws_mod_data, sex == "male")
+ynmo_ws_prod_mod_m <- gamlss(produces_01 ~ pbm(age_in_months, lambda = 10000),
+                               sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+                               family = BE, 
+                               control = gamlss.control(c.crit = .1),
+                               data = ws_mod_data_m)
+
+ws_mod_data_f <- filter(ws_mod_data, sex == "female")
+ynmo_ws_prod_mod_f <- gamlss(produces_01 ~ pbm(age_in_months, lambda = 10000),
+                               sigma.formula = ~ pbm(age_in_months, lambda = 10000),
+                               family = BE, 
+                               control = gamlss.control(c.crit = .1),
+                               data = ws_mod_data_f)
+
+cents_m <- centiles.pred(ynmo_ws_prod_mod_m, cent = all_quants,
+                       xname = "age_in_months", xvalues = 16:36) |>
+  rename(age_in_months = x) |>
+  pivot_longer(-age_in_months, names_to = "percentile", values_to = "produces") |>
+  mutate(produces = round((produces * (max_vocab+1)) - .001), 
+         produces = ifelse(produces > 100, 100, produces))  |>
+  pivot_wider(names_from = "percentile", values_from = "produces")
+
+cents_f <- centiles.pred(ynmo_ws_prod_mod_f, cent = all_quants,
+                       xname = "age_in_months", xvalues = 16:36) |>
+  rename(age_in_months = x) |>
+  pivot_longer(-age_in_months, names_to = "percentile", values_to = "produces") |>
+  mutate(produces = round((produces * (max_vocab+1)) - .001), 
+         produces = ifelse(produces > 100, 100, produces))  |>
+  pivot_wider(names_from = "percentile", values_from = "produces")
+
+write_csv(cents_m, "wg_centiles_male_2023-05-04.csv")
+write_csv(cents_f, "wg_centiles_female_2023-05-04.csv")
+```
