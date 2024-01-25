@@ -26,13 +26,18 @@ Read in data.
 ```{r}
 ynmo1 <- suppressMessages(read_xlsx(path="raw_data/YNMO/Ynmo Norms Part 1 Sept 2022 - Final.xlsx", 
                                        sheet="Part 1 responses")) |>
-  mutate(part = 1)
+  mutate(part = 1) |>
+  slice(-1)
+
 ynmo2 <- suppressMessages(read_xlsx(path="raw_data/YNMO/Ynmo Norms Part 2 Jan 2023 - Final .xlsx", 
                                        sheet=" Part 2 responses")) |>
-  mutate(part = 2)
+  mutate(part = 2) |>
+  slice(-1)
+
 ynmo3 <- suppressMessages(read_xlsx(path="raw_data/YNMO/Ynmo Norms Part 3 Jan 2023 -Final.xlsx", 
                                        sheet="Part 3 Responses - Ynmo app")) |>
-  mutate(part = 3)
+  mutate(part = 3) |>
+  slice(-1)
 
 raw_ynmo <- bind_rows(ynmo1, ynmo2, ynmo3)
 ```
@@ -46,7 +51,7 @@ qplot(raw_ynmo$age_in_months, fill = as.factor(raw_ynmo$part), binwidth = 6)
 
 
 ```{r}
-ynmo <- raw_ynmo |> slice(-1) 
+ynmo <- raw_ynmo
 
 demo <- ynmo |>
   select(subject_ID : disability_or_language_disorders_other_family)
@@ -73,10 +78,11 @@ By part and form totals.
 
 ```{r}
 bind_rows(ynmo_wg, ynmo_ws) |>
-  group_by(part, form) |>
+  group_by(form, part) |>
   count() |>
   knitr::kable()
 ```
+
 
 
 # Words and Gestures
@@ -319,6 +325,22 @@ ggsave(here("graphs","combine_vocab.png"), width = 6, height = 4)
 
 ```{r}
 summary(ynmo_ws_prod_combine_mod)
+```
+
+
+Combines table.
+
+```{r}
+ws_mod_data |>
+  mutate(`not yet` = ifelse(combine_words == "not yet", 1, 0),
+         sometimes = ifelse(combine_words == "sometimes", 1, 0), 
+         often = ifelse(combine_words == "often", 1, 0)) |>
+  group_by(age_in_months, sex) |>
+  summarise(`not yet` = mean(`not yet`), 
+            `sometimes or often` = mean(sometimes | often)) |>
+  pivot_wider(names_from = "sex", values_from = c("not yet","sometimes or often")) |>
+  write_csv("outputs/WS_combines.csv")
+
 ```
 
 
